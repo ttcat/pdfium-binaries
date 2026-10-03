@@ -1,22 +1,30 @@
 --- a/core/fxge/cfx_face.cpp
 +++ b/core/fxge/cfx_face.cpp
-@@ -4,6 +4,7 @@
+@@ -4,6 +4,8 @@
  
  #include "core/fxge/cfx_face.h"
  
 +#include <stdlib.h>
++#include <string.h>
  #include <algorithm>
  #include <array>
  #include <cmath>
-@@ -841,6 +842,11 @@
+@@ -841,6 +843,18 @@
    int load_flags = FT_LOAD_NO_BITMAP | FT_LOAD_PEDANTIC;
    if (!IsTtOt()) {
      load_flags |= FT_LOAD_NO_HINTING;
 +  } else if (anti_alias == FontAntiAliasingMode::kMono &&
 +             getenv("PDFIUM_XFA_TEXT_ALIASED")) {
-+    // xfaconvert: hint for black-and-white output so stems snap to whole
-+    // pixels, like Adobe Acrobat's image export.
-+    load_flags |= FT_LOAD_TARGET_MONO;
++    // xfaconvert: hinting mode for black-and-white output, chosen by
++    // PDFIUM_XFA_TEXT_HINT = mono (default) | light | normal | none.
++    const char* hint = getenv("PDFIUM_XFA_TEXT_HINT");
++    if (!hint || !strcmp(hint, "mono")) {
++      load_flags |= FT_LOAD_TARGET_MONO;
++    } else if (!strcmp(hint, "light")) {
++      load_flags |= FT_LOAD_TARGET_LIGHT;
++    } else if (!strcmp(hint, "none")) {
++      load_flags |= FT_LOAD_NO_HINTING;
++    }
    }
    FT_FaceRec* rec = GetRec();
    int error = FT_Load_Glyph(rec, glyph_index, load_flags);
