@@ -358,3 +358,23 @@ The following projects use (or recommend using) our PDFium builds:
 [pypdfium2]: https://github.com/pypdfium2-team/pypdfium2
 [spacedrive]: https://github.com/spacedriveapp/spacedrive
 [wxpdfview]: https://github.com/TcT2k/wxPDFView
+
+---
+
+## This fork
+
+Fork used by 表格轉檔 (an internal tool that renders XFA forms to images so they match Adobe Acrobat's
+image export). It adds one patch, `patches/xfaconvert/text.patch`, which turns several hard-coded values
+into environment variables. **When none of them is set, behaviour is identical to upstream PDFium.**
+
+| Variable | Values | Upstream behaviour |
+|---|---|---|
+| `PDFIUM_XFA_TEXT_AA` | `lcd` / `normal` / `mono` | `lcd` (XFA text only) |
+| `PDFIUM_XFA_TEXT_HINT` | `mono` / `light` / `normal` / `none` | FreeType default |
+| `PDFIUM_XFA_TEXT_GAMMA` | number, e.g. `0.6`–`2` | 1 (no change) |
+| `PDFIUM_XFA_BREAK_TOLERANCE` | fraction of font size | `0.2` |
+| `PDFIUM_XFA_EDIT_TOLERANCE` | points | `2` |
+| `PDFIUM_XFA_FIX_SINGLELINE` | `1` | single-line fields wrap at 100pt |
+| `PDFIUM_XFA_SYNTHETIC_STYLE` | `0` | extra slant/emboldening on real italic/bold faces |
+
+Build with the `xfaconvert macOS` workflow on branch `xfaconvert-7999` (PDFium chromium/7999).
