@@ -1,0 +1,45 @@
+--- a/core/fxge/cfx_face.cpp
++++ b/core/fxge/cfx_face.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include "core/fxge/cfx_face.h"
+ 
++#include <stdlib.h>
+ #include <algorithm>
+ #include <array>
+ #include <cmath>
+@@ -841,6 +842,11 @@
+   int load_flags = FT_LOAD_NO_BITMAP | FT_LOAD_PEDANTIC;
+   if (!IsTtOt()) {
+     load_flags |= FT_LOAD_NO_HINTING;
++  } else if (anti_alias == FontAntiAliasingMode::kMono &&
++             getenv("PDFIUM_XFA_TEXT_ALIASED")) {
++    // xfaconvert: hint for black-and-white output so stems snap to whole
++    // pixels, like Adobe Acrobat's image export.
++    load_flags |= FT_LOAD_TARGET_MONO;
+   }
+   FT_FaceRec* rec = GetRec();
+   int error = FT_Load_Glyph(rec, glyph_index, load_flags);
+--- a/xfa/fde/cfde_textout.cpp
++++ b/xfa/fde/cfde_textout.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "xfa/fde/cfde_textout.h"
+ 
++#include <stdlib.h>
+ #include <algorithm>
+ #include <utility>
+ 
+@@ -77,7 +78,11 @@
+   RetainPtr<CFGAS_GEFont> pCurFont;
+   TextCharPos* pCurCP = nullptr;
+   size_t count = 0;
+-  static constexpr CFX_TextRenderOptions kOptions(CFX_TextRenderOptions::kLcd);
++  // xfaconvert: PDFIUM_XFA_TEXT_ALIASED=1 draws XFA text without anti-aliasing
++  // (black-and-white, hinted), matching Adobe Acrobat's image export.
++  static const CFX_TextRenderOptions kOptions(
++      getenv("PDFIUM_XFA_TEXT_ALIASED") ? CFX_TextRenderOptions::kAliasing
++                                        : CFX_TextRenderOptions::kLcd);
+   for (auto& pos : pCharPos) {
+     RetainPtr<CFGAS_GEFont> pSTFont =
+         pFont->GetSubstFont(static_cast<int32_t>(pos.glyph_index_));

@@ -1,0 +1,43 @@
+name: xfaconvert macOS (V8 + XFA, universal)
+
+# 表格轉檔用：只編 macOS 的 V8／XFA 版（arm64、x64），再合成 universal。
+# PDFium 分支固定在 chromium/7999，和 App 目前使用的版本相同。
+on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: PDFium branch
+        required: false
+        default: chromium/7999
+
+permissions: {}
+
+jobs:
+  arm64:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      target_os: mac
+      target_cpu: arm64
+      enable_v8: true
+  x64:
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/build.yml
+    with:
+      branch: ${{ github.event.inputs.branch }}
+      target_os: mac
+      target_cpu: x64
+      enable_v8: true
+  univ:
+    needs: [arm64, x64]
+    permissions:
+      actions: write
+    uses: ./.github/workflows/mac-univ.yml
+    with:
+      artifact_x64: ${{ needs.x64.outputs.artifact }}
+      artifact_arm64: ${{ needs.arm64.outputs.artifact }}
