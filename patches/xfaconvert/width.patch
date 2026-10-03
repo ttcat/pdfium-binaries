@@ -241,7 +241,7 @@ index 6053c43..ec2c2dd 100644
        fX -= fCharWidth;
      }
 diff --git a/xfa/fgas/layout/cfgas_txtbreak.cpp b/xfa/fgas/layout/cfgas_txtbreak.cpp
-index 61bbbc1..887eff1 100644
+index 61bbbc1..cb15d72 100644
 --- a/xfa/fgas/layout/cfgas_txtbreak.cpp
 +++ b/xfa/fgas/layout/cfgas_txtbreak.cpp
 @@ -23,6 +23,19 @@
@@ -275,7 +275,21 @@ index 61bbbc1..887eff1 100644
    } else if (font_) {
      iCharWidth = font_->GetCharWidth(wForm).value_or(0);
      iCharWidth *= font_size_;
-@@ -825,6 +842,8 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
+@@ -685,7 +702,12 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
+   int32_t iVerScale = run.iVerticalScale;
+   bool bSkipSpace = run.bSkipSpace;
+ 
+-  const float fYBase = rtText.top + (rtText.height - fFontSize) / 2.0f;
++  // xfaconvert: Acrobat puts each line's glyphs at the top of the line box;
++  // PDFium centers them, which pushes every line but the last (whose box is
++  // shrunk to the font size) down by (line spacing - font size) / 2.
++  const float fYBase =
++      UseExactWidths() ? rtText.top
++                       : rtText.top + (rtText.height - fFontSize) / 2.0f;
+   float fX = bRTLPiece ? rtText.right() : rtText.left;
+   float fY = fYBase + fAscent;
+ 
+@@ -825,6 +847,8 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
        iCharWidth = -iCharWidth;
      }
  
@@ -284,7 +298,7 @@ index 61bbbc1..887eff1 100644
      iCharWidth /= iFontSize;
      std::array<FX_FORMCHAR, 3> form_chars;
      form_chars[0].wch = wch;
-@@ -856,7 +875,9 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
+@@ -856,7 +880,9 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
          front_ref.font_char_width_ = iCharWidth;
        }
  
