@@ -26,6 +26,10 @@ case "$BUILD_TYPE" in
 esac
 
 apply_patch "$PATCHES/public_headers.patch"
+
+# xfaconvert（表格轉檔）：XFA 文字可切換成無反鋸齒＋黑白字形對齊，比照 Adobe Acrobat 的圖片匯出。
+# 預設行為不變；設定環境變數 PDFIUM_XFA_TEXT_ALIASED=1 才啟用。
+apply_patch "$PATCHES/xfaconvert/text.patch"
 apply_patch "$PATCHES/clang_rt.patch" build
 
 [ "$ENABLE_V8" == "true" ] && apply_patch "$PATCHES/v8/pdfium.patch"

@@ -376,3 +376,12 @@ The following projects use (or recommend using) our PDFium builds:
 [pypdfium2]: https://github.com/pypdfium2-team/pypdfium2
 [spacedrive]: https://github.com/spacedriveapp/spacedrive
 [wxpdfview]: https://github.com/TcT2k/wxPDFView
+
+---
+
+## This fork
+
+Fork used by 表格轉檔 (an internal tool that renders XFA forms to images). It adds one patch,
+`patches/xfaconvert/text.patch`: when the environment variable `PDFIUM_XFA_TEXT_ALIASED` is set,
+XFA text is drawn without anti-aliasing and hinted for monochrome output. Default behaviour is unchanged.
+Build with the `xfaconvert macOS` workflow.
