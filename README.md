@@ -379,5 +379,7 @@ into environment variables. **When none of them is set, behaviour is identical t
 | `PDFIUM_XFA_TEXT_DUMP` | file path | — (appends one line per XFA glyph: font, style, size, unicode, glyph id, device x/y) |
 | `PDFIUM_XFA_TEXT_SKIP` | `1` | — (record glyphs without drawing them) |
 | `PDFIUM_XFA_EXACT_WIDTH` | `1` | upstream layout (set for Adobe Acrobat-compatible XFA text layout: exact glyph advances instead of whole 1/1000 em, fractional field widths, glyphs at the top of each line box) |
+| `PDFIUM_XFA_PATH_ALIASED` | `1` | anti-aliased XFA lines, borders and fills |
+| `PDFIUM_XFA_STROKE_ADJUST` | `1` | no stroke adjustment for XFA lines |
 
 Build with the `xfaconvert macOS` workflow on branch `xfaconvert-7999` (PDFium chromium/7999).

@@ -32,6 +32,8 @@ apply_patch "$PATCHES/public_headers.patch"
 apply_patch "$PATCHES/xfaconvert/text.patch"
 # 版面用字型的精確字寬（PDFium 原本把字寬截成整數個千分之一 em）；PDFIUM_XFA_EXACT_WIDTH=1 才啟用。
 apply_patch "$PATCHES/xfaconvert/width.patch"
+# XFA 線條與方框：PDFIUM_XFA_PATH_ALIASED=1 不做反鋸齒、PDFIUM_XFA_STROKE_ADJUST=1 線寬對齊像素（比照 Acrobat）。
+apply_patch "$PATCHES/xfaconvert/graphics.patch"
 apply_patch "$PATCHES/clang_rt.patch" build
 
 [ "$ENABLE_V8" == "true" ] && apply_patch "$PATCHES/v8/pdfium.patch"
