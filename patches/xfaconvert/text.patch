@@ -1,53 +1,208 @@
 --- a/core/fxge/cfx_face.cpp
 +++ b/core/fxge/cfx_face.cpp
-@@ -4,6 +4,8 @@
+@@ -4,6 +4,9 @@
  
  #include "core/fxge/cfx_face.h"
  
++#include <math.h>
 +#include <stdlib.h>
 +#include <string.h>
  #include <algorithm>
  #include <array>
  #include <cmath>
-@@ -841,6 +843,18 @@
+@@ -841,6 +844,18 @@
    int load_flags = FT_LOAD_NO_BITMAP | FT_LOAD_PEDANTIC;
    if (!IsTtOt()) {
      load_flags |= FT_LOAD_NO_HINTING;
-+  } else if (anti_alias == FontAntiAliasingMode::kMono &&
-+             getenv("PDFIUM_XFA_TEXT_ALIASED")) {
-+    // xfaconvert: hinting mode for black-and-white output, chosen by
-+    // PDFIUM_XFA_TEXT_HINT = mono (default) | light | normal | none.
-+    const char* hint = getenv("PDFIUM_XFA_TEXT_HINT");
-+    if (!hint || !strcmp(hint, "mono")) {
++  } else if (const char* hint = getenv("PDFIUM_XFA_TEXT_HINT")) {
++    // xfaconvert: PDFIUM_XFA_TEXT_HINT = mono | light | normal | none.
++    if (!strcmp(hint, "mono")) {
 +      load_flags |= FT_LOAD_TARGET_MONO;
 +    } else if (!strcmp(hint, "light")) {
 +      load_flags |= FT_LOAD_TARGET_LIGHT;
 +    } else if (!strcmp(hint, "none")) {
 +      load_flags |= FT_LOAD_NO_HINTING;
 +    }
++  } else if (anti_alias == FontAntiAliasingMode::kMono &&
++             getenv("PDFIUM_XFA_TEXT_ALIASED")) {
++    load_flags |= FT_LOAD_TARGET_MONO;
    }
    FT_FaceRec* rec = GetRec();
    int error = FT_Load_Glyph(rec, glyph_index, load_flags);
---- a/xfa/fde/cfde_textout.cpp
-+++ b/xfa/fde/cfde_textout.cpp
+@@ -904,6 +919,24 @@
+     new_bitmap->Populate8bbpMaskFrom1bppSpan(src_span, src_pitch);
+   } else {
+     new_bitmap->PopulateFromSpan(src_span, src_pitch);
++  }
++  // xfaconvert: PDFIUM_XFA_TEXT_GAMMA reshapes anti-aliased edge coverage
++  // (< 1 lighter / thinner, > 1 darker / bolder). Only affects 8-bit masks.
++  if (const char* g = getenv("PDFIUM_XFA_TEXT_GAMMA")) {
++    const double gamma = atof(g);
++    if (gamma > 0 && gamma != 1.0 &&
++        new_bitmap->GetFormat() == FXDIB_Format::k8bppMask) {
++      uint8_t lut[256];
++      for (int i = 0; i < 256; ++i) {
++        lut[i] = static_cast<uint8_t>(
++            lround(255.0 * pow(i / 255.0, 1.0 / gamma)));
++      }
++      for (int row = 0; row < new_bitmap->GetHeight(); ++row) {
++        for (uint8_t& v : new_bitmap->GetWritableScanline(row)) {
++          v = lut[v];
++        }
++      }
++    }
+   }
+ #if defined(PDF_ENABLE_SKIA_TYPEFACE_CHECKS)
+   // TODO(https://crbug.com/42271123): Compute equivalent result via Skia or
+--- a/xfa/fde/cfde_texteditengine.cpp
++++ b/xfa/fde/cfde_texteditengine.cpp
 @@ -6,6 +6,7 @@
  
- #include "xfa/fde/cfde_textout.h"
+ #include "xfa/fde/cfde_texteditengine.h"
  
 +#include <stdlib.h>
  #include <algorithm>
  #include <utility>
  
-@@ -77,7 +78,11 @@
+@@ -132,8 +133,19 @@
+   operation_buffer_.resize(max_edit_operations_);
+ 
+   text_break_.SetFontSize(font_size_);
+-  text_break_.SetLineBreakTolerance(2.0f);
++  // xfaconvert: PDFIUM_XFA_EDIT_TOLERANCE (points, default 2) is how far a
++  // line in a text field may run past its width.
++  text_break_.SetLineBreakTolerance(
++      getenv("PDFIUM_XFA_EDIT_TOLERANCE")
++          ? static_cast<float>(atof(getenv("PDFIUM_XFA_EDIT_TOLERANCE")))
++          : 2.0f);
+   text_break_.SetTabWidth(36);
++  // xfaconvert: PDFIUM_XFA_FIX_SINGLELINE=1 fixes single-line fields being
++  // wrapped at 100pt: the breaker's default width is never replaced because
++  // EnableLineWrap(false) returns early when the flag is already false.
++  if (getenv("PDFIUM_XFA_FIX_SINGLELINE")) {
++    text_break_.SetLineWidth(kPageWidthMax);
++  }
+ }
+ 
+ CFDE_TextEditEngine::~CFDE_TextEditEngine() = default;
+--- a/xfa/fde/cfde_textout.cpp
++++ b/xfa/fde/cfde_textout.cpp
+@@ -6,6 +6,8 @@
+ 
+ #include "xfa/fde/cfde_textout.h"
+ 
++#include <stdlib.h>
++#include <string.h>
+ #include <algorithm>
+ #include <utility>
+ 
+@@ -45,6 +47,19 @@
+ }  // namespace
+ 
+ // static
++namespace {
++// xfaconvert: runtime parameters read from environment variables. When a
++// variable is not set the behaviour is identical to upstream PDFium.
++const char* XfaEnv(const char* name) {
++  const char* v = getenv(name);
++  return (v && *v) ? v : nullptr;
++}
++float XfaEnvFloat(const char* name, float fallback) {
++  const char* v = XfaEnv(name);
++  return v ? static_cast<float>(atof(v)) : fallback;
++}
++}  // namespace
++
+ bool CFDE_TextOut::DrawString(CFX_RenderDevice* device,
+                               FX_ARGB color,
+                               const RetainPtr<CFGAS_GEFont>& pFont,
+@@ -55,7 +70,12 @@
+   DCHECK(!pCharPos.empty());
+ 
+   CFX_Font* pFxFont = pFont->GetDevFont();
+-  if (FontStyleIsItalic(pFont->GetFontStyles()) && !pFxFont->IsItalic()) {
++  // xfaconvert: PDFIUM_XFA_SYNTHETIC_STYLE=0 turns off the extra slant and
++  // emboldening PDFium applies on top of real italic/bold faces.
++  const char* synth = XfaEnv("PDFIUM_XFA_SYNTHETIC_STYLE");
++  const bool synthetic = !synth || strcmp(synth, "0") != 0;
++  if (synthetic && FontStyleIsItalic(pFont->GetFontStyles()) &&
++      !pFxFont->IsItalic()) {
+     for (auto& pos : pCharPos) {
+       static constexpr float mc = 0.267949f;
+       pos.adjust_matrix_[2] += mc * pos.adjust_matrix_[0];
+@@ -67,17 +87,31 @@
+   uint32_t dwFontStyle = pFont->GetFontStyles();
+   CFX_Font FxFont;
+   auto SubstFxFont = std::make_unique<CFX_SubstFont>();
+-  SubstFxFont->SetWeight(FontStyleIsForceBold(dwFontStyle) ? 700 : 400);
+-  SubstFxFont->SetItalicAngle(FontStyleIsItalic(dwFontStyle) ? -12 : 0);
++  SubstFxFont->SetWeight(synthetic && FontStyleIsForceBold(dwFontStyle) ? 700
++                                                                       : 400);
++  SubstFxFont->SetItalicAngle(synthetic && FontStyleIsItalic(dwFontStyle) ? -12
++                                                                          : 0);
+   SubstFxFont->SetWeightCJK(SubstFxFont->GetWeight());
+-  SubstFxFont->SetItalicCJK(FontStyleIsItalic(dwFontStyle));
++  SubstFxFont->SetItalicCJK(synthetic && FontStyleIsItalic(dwFontStyle));
+   FxFont.SetSubstFont(std::move(SubstFxFont));
+ #endif
+ 
    RetainPtr<CFGAS_GEFont> pCurFont;
    TextCharPos* pCurCP = nullptr;
    size_t count = 0;
 -  static constexpr CFX_TextRenderOptions kOptions(CFX_TextRenderOptions::kLcd);
-+  // xfaconvert: PDFIUM_XFA_TEXT_ALIASED=1 draws XFA text without anti-aliasing
-+  // (black-and-white, hinted), matching Adobe Acrobat's image export.
-+  static const CFX_TextRenderOptions kOptions(
-+      getenv("PDFIUM_XFA_TEXT_ALIASED") ? CFX_TextRenderOptions::kAliasing
-+                                        : CFX_TextRenderOptions::kLcd);
++  // xfaconvert: PDFIUM_XFA_TEXT_AA = lcd (default) | normal | mono.
++  // (PDFIUM_XFA_TEXT_ALIASED=1 is the same as mono.)
++  CFX_TextRenderOptions::AliasingType aa = CFX_TextRenderOptions::kLcd;
++  if (const char* mode = XfaEnv("PDFIUM_XFA_TEXT_AA")) {
++    if (!strcmp(mode, "mono")) {
++      aa = CFX_TextRenderOptions::kAliasing;
++    } else if (!strcmp(mode, "normal")) {
++      aa = CFX_TextRenderOptions::kAntiAliasing;
++    }
++  } else if (XfaEnv("PDFIUM_XFA_TEXT_ALIASED")) {
++    aa = CFX_TextRenderOptions::kAliasing;
++  }
++  const CFX_TextRenderOptions kOptions(aa);
    for (auto& pos : pCharPos) {
      RetainPtr<CFGAS_GEFont> pSTFont =
          pFont->GetSubstFont(static_cast<int32_t>(pos.glyph_index_));
+--- a/xfa/fxfa/cxfa_textlayout.cpp
++++ b/xfa/fxfa/cxfa_textlayout.cpp
+@@ -8,6 +8,7 @@
+ 
+ #include <math.h>
+ 
++#include <stdlib.h>
+ #include <algorithm>
+ #include <utility>
+ 
+@@ -229,7 +230,13 @@
+   float fFontSize = text_parser_->GetFontSize(text_provider_, nullptr);
+   break_->SetFontSize(fFontSize);
+   break_->SetFont(text_parser_->GetFont(doc_.Get(), text_provider_, nullptr));
+-  break_->SetLineBreakTolerance(fFontSize * 0.2f);
++  // xfaconvert: PDFIUM_XFA_BREAK_TOLERANCE (fraction of font size, default
++  // 0.2) is how far a line of static text may run past its width.
++  break_->SetLineBreakTolerance(
++      fFontSize * (getenv("PDFIUM_XFA_BREAK_TOLERANCE")
++                       ? static_cast<float>(
++                             atof(getenv("PDFIUM_XFA_BREAK_TOLERANCE")))
++                       : 0.2f));
+ }
+ 
+ void CXFA_TextLayout::InitBreak(CFX_CSSComputedStyle* pStyle,
+@@ -310,7 +317,13 @@
+   }
+   float fFontSize = text_parser_->GetFontSize(text_provider_, pStyle);
+   break_->SetFontSize(fFontSize);
+-  break_->SetLineBreakTolerance(fFontSize * 0.2f);
++  // xfaconvert: PDFIUM_XFA_BREAK_TOLERANCE (fraction of font size, default
++  // 0.2) is how far a line of static text may run past its width.
++  break_->SetLineBreakTolerance(
++      fFontSize * (getenv("PDFIUM_XFA_BREAK_TOLERANCE")
++                       ? static_cast<float>(
++                             atof(getenv("PDFIUM_XFA_BREAK_TOLERANCE")))
++                       : 0.2f));
+   break_->SetFont(text_parser_->GetFont(doc_.Get(), text_provider_, pStyle));
+   break_->SetHorizontalScale(
+       text_parser_->GetHorScale(text_provider_, pStyle, pXMLNode));
