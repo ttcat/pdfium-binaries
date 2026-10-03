@@ -38,6 +38,63 @@ index 6c225d0..bcacde3 100644
    ByteString GetGlyphName(uint32_t glyph_index);
  
    int GetCharIndex(uint32_t code);
+diff --git a/xfa/fde/cfde_texteditengine.cpp b/xfa/fde/cfde_texteditengine.cpp
+index 3295716..6bfbe80 100644
+--- a/xfa/fde/cfde_texteditengine.cpp
++++ b/xfa/fde/cfde_texteditengine.cpp
+@@ -6,6 +6,7 @@
+ 
+ #include "xfa/fde/cfde_texteditengine.h"
+ 
++#include <math.h>
+ #include <stdlib.h>
+ #include <algorithm>
+ #include <utility>
+@@ -21,6 +22,18 @@
+ #include "xfa/fde/cfde_wordbreak_data.h"
+ #include "xfa/fgas/font/cfgas_gefont.h"
+ 
++namespace {
++
++// xfaconvert: with PDFIUM_XFA_EXACT_WIDTH=1 keep the fractional part of the
++// available width (it used to be stored as size_t), so right-aligned and
++// centered field text lands where Adobe Acrobat puts it.
++bool XfaExactWidths() {
++  const char* value = getenv("PDFIUM_XFA_EXACT_WIDTH");
++  return value && value[0] && value[0] != '0';
++}
++
++}  // namespace
++
+ namespace pdfium {
+ 
+ namespace {
+@@ -626,7 +639,10 @@ CFX_RectF CFDE_TextEditEngine::GetContentsBoundingBox() {
+   return contents_bounding_box_;
+ }
+ 
+-void CFDE_TextEditEngine::SetAvailableWidth(size_t width) {
++void CFDE_TextEditEngine::SetAvailableWidth(float width) {
++  if (!XfaExactWidths()) {
++    width = floorf(width);
++  }
+   if (width == available_width_) {
+     return;
+   }
+@@ -773,9 +789,11 @@ void CFDE_TextEditEngine::SetCombText(bool enable) {
+ }
+ 
+ void CFDE_TextEditEngine::SetCombTextWidth() {
+-  size_t width = available_width_;
++  float width = available_width_;
+   if (has_character_limit_) {
+-    width /= character_limit_;
++    width = XfaExactWidths()
++                ? width / character_limit_
++                : floorf(static_cast<size_t>(width) / character_limit_);
+   }
+ 
+   text_break_.SetCombWidth(width);
 diff --git a/xfa/fgas/font/cfgas_gefont.cpp b/xfa/fgas/font/cfgas_gefont.cpp
 index b82b38b..40d544f 100644
 --- a/xfa/fgas/font/cfgas_gefont.cpp
@@ -238,3 +295,25 @@ index 61bbbc1..887eff1 100644
        if (bRTLPiece && chartype != CharType::kCombination) {
          fX -= fCharWidth;
        }
+diff --git a/xfa/fde/cfde_texteditengine.h b/xfa/fde/cfde_texteditengine.h
+index d659d70..d72538e 100644
+--- a/xfa/fde/cfde_texteditengine.h
++++ b/xfa/fde/cfde_texteditengine.h
+@@ -109,7 +109,7 @@ class CFDE_TextEditEngine final : public CFGAS_TxtBreak::Engine {
+ 
+   // Non-const so we can force a layout.
+   CFX_RectF GetContentsBoundingBox();
+-  void SetAvailableWidth(size_t width);
++  void SetAvailableWidth(float width);
+ 
+   void SetFont(RetainPtr<CFGAS_GEFont> font);
+   RetainPtr<CFGAS_GEFont> GetFont() const;
+@@ -228,7 +228,7 @@ class CFDE_TextEditEngine final : public CFGAS_TxtBreak::Engine {
+   size_t gap_position_ = 0;
+   size_t gap_size_ = kGapSize;
+ 
+-  size_t available_width_ = kPageWidthMax;
++  float available_width_ = kPageWidthMax;
+   size_t character_limit_ = std::numeric_limits<size_t>::max();
+   size_t visible_line_count_ = 1;
+   // Ring buffer of edit operations
