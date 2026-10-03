@@ -376,5 +376,7 @@ into environment variables. **When none of them is set, behaviour is identical t
 | `PDFIUM_XFA_EDIT_TOLERANCE` | points | `2` |
 | `PDFIUM_XFA_FIX_SINGLELINE` | `1` | single-line fields wrap at 100pt |
 | `PDFIUM_XFA_SYNTHETIC_STYLE` | `0` | extra slant/emboldening on real italic/bold faces |
+| `PDFIUM_XFA_TEXT_DUMP` | file path | — (appends one line per XFA glyph: font, style, size, unicode, glyph id, device x/y) |
+| `PDFIUM_XFA_TEXT_SKIP` | `1` | — (record glyphs without drawing them) |
 
 Build with the `xfaconvert macOS` workflow on branch `xfaconvert-7999` (PDFium chromium/7999).

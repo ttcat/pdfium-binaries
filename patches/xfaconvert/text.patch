@@ -87,16 +87,18 @@
  CFDE_TextEditEngine::~CFDE_TextEditEngine() = default;
 --- a/xfa/fde/cfde_textout.cpp
 +++ b/xfa/fde/cfde_textout.cpp
-@@ -6,6 +6,8 @@
+@@ -6,6 +6,10 @@
  
  #include "xfa/fde/cfde_textout.h"
  
++#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
++#include <string>
  #include <algorithm>
  #include <utility>
  
-@@ -45,6 +47,19 @@
+@@ -45,6 +49,39 @@
  }  // namespace
  
  // static
@@ -111,12 +113,32 @@
 +  const char* v = XfaEnv(name);
 +  return v ? static_cast<float>(atof(v)) : fallback;
 +}
++// xfaconvert: PDFIUM_XFA_TEXT_DUMP=<file> appends one line per glyph:
++// font \t styles \t size \t unicode \t glyph \t device-x \t device-y \t
++// matrix-a \t matrix-d \t color. The path is read on every call so the
++// caller can switch files between pages.
++FILE* XfaDumpFile() {
++  static std::string current;
++  static FILE* file = nullptr;
++  const char* path = XfaEnv("PDFIUM_XFA_TEXT_DUMP");
++  if (!path) {
++    return nullptr;
++  }
++  if (!file || current != path) {
++    if (file) {
++      fclose(file);
++    }
++    file = fopen(path, "a");
++    current = path;
++  }
++  return file;
++}
 +}  // namespace
 +
  bool CFDE_TextOut::DrawString(CFX_RenderDevice* device,
                                FX_ARGB color,
                                const RetainPtr<CFGAS_GEFont>& pFont,
-@@ -55,7 +70,12 @@
+@@ -55,7 +92,12 @@
    DCHECK(!pCharPos.empty());
  
    CFX_Font* pFxFont = pFont->GetDevFont();
@@ -130,7 +152,7 @@
      for (auto& pos : pCharPos) {
        static constexpr float mc = 0.267949f;
        pos.adjust_matrix_[2] += mc * pos.adjust_matrix_[0];
-@@ -67,17 +87,31 @@
+@@ -67,22 +109,48 @@
    uint32_t dwFontStyle = pFont->GetFontStyles();
    CFX_Font FxFont;
    auto SubstFxFont = std::make_unique<CFX_SubstFont>();
@@ -163,9 +185,36 @@
 +    aa = CFX_TextRenderOptions::kAliasing;
 +  }
 +  const CFX_TextRenderOptions kOptions(aa);
++  FILE* dump = XfaDumpFile();
    for (auto& pos : pCharPos) {
      RetainPtr<CFGAS_GEFont> pSTFont =
          pFont->GetSubstFont(static_cast<int32_t>(pos.glyph_index_));
+     pos.glyph_index_ &= 0x00FFFFFF;
+     pos.is_cid_font_ = false;
++    if (dump && pSTFont) {
++      const CFX_PointF dev = matrix.Transform(pos.origin_);
++      fprintf(dump, "%s\t%u\t%.4f\t%u\t%u\t%.4f\t%.4f\t%.5f\t%.5f\t%08x\n",
++              pSTFont->GetDevFont()->GetBaseFontName().c_str(),
++              pSTFont->GetFontStyles(), fFontSize, pos.unicode_,
++              pos.glyph_index_, dev.x, dev.y, matrix.a, matrix.d, color);
++    }
++    // xfaconvert: PDFIUM_XFA_TEXT_SKIP=1 records the glyphs but draws nothing.
++    if (XfaEnv("PDFIUM_XFA_TEXT_SKIP")) {
++      continue;
++    }
+     if (pCurFont != pSTFont) {
+       if (pCurFont) {
+         pFxFont = pCurFont->GetDevFont();
+@@ -104,6 +172,9 @@
+     } else {
+       ++count;
+     }
++  }
++  if (dump) {
++    fflush(dump);
+   }
+   if (pCurFont && count) {
+     pFxFont = pCurFont->GetDevFont();
 --- a/xfa/fxfa/cxfa_textlayout.cpp
 +++ b/xfa/fxfa/cxfa_textlayout.cpp
 @@ -8,6 +8,7 @@
