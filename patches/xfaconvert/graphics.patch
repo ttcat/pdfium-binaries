@@ -1,8 +1,8 @@
 diff --git a/xfa/fgas/graphics/cfgas_gegraphics.cpp b/xfa/fgas/graphics/cfgas_gegraphics.cpp
-index 3ddbbd2..c06cc35 100644
+index 3ddbbd2..07dadfe 100644
 --- a/xfa/fgas/graphics/cfgas_gegraphics.cpp
 +++ b/xfa/fgas/graphics/cfgas_gegraphics.cpp
-@@ -24,6 +24,29 @@
+@@ -24,6 +24,43 @@
  #include "xfa/fgas/graphics/cfgas_gepath.h"
  #include "xfa/fgas/graphics/cfgas_gepattern.h"
  #include "xfa/fgas/graphics/cfgas_geshading.h"
@@ -28,12 +28,29 @@ index 3ddbbd2..c06cc35 100644
 +  return options;
 +}
 +
++// xfaconvert: PDFIUM_XFA_PATH_NUDGE=<device px> shifts XFA lines and boxes by
++// a tiny amount right/down so that a line centred exactly on a pixel boundary
++// fills the pixel below/right of it, as Adobe Acrobat does (instead of both).
++void XfaNudge(CFX_Matrix& m) {
++  const char* value = getenv("PDFIUM_XFA_PATH_NUDGE");
++  if (!value || !value[0]) {
++    return;
++  }
++  const float nudge = static_cast<float>(atof(value));
++  if (nudge != 0) {
++    m.Translate(nudge, nudge);
++  }
++}
++
 +}  // namespace
  
  namespace {
  
-@@ -214,7 +237,7 @@ void CFGAS_GEGraphics::RenderDeviceStrokePath(const CFGAS_GEPath& path,
+@@ -212,9 +249,10 @@ void CFGAS_GEGraphics::RenderDeviceStrokePath(const CFGAS_GEPath& path,
+ 
+   CFX_Matrix m = info_.CTM;
    m.Concat(matrix);
++  XfaNudge(m);
    render_device_->DrawPath(path.GetPath(), &m, &info_.graphState, 0x0,
                             info_.strokeColor.GetArgb(),
 -                           CFX_FillRenderOptions());
@@ -41,9 +58,11 @@ index 3ddbbd2..c06cc35 100644
  }
  
  void CFGAS_GEGraphics::RenderDeviceFillPath(
-@@ -224,7 +247,8 @@ void CFGAS_GEGraphics::RenderDeviceFillPath(
+@@ -223,8 +261,10 @@ void CFGAS_GEGraphics::RenderDeviceFillPath(
+     const CFX_Matrix& matrix) {
    CFX_Matrix m = info_.CTM;
    m.Concat(matrix);
++  XfaNudge(m);
  
 -  const CFX_FillRenderOptions fill_options(fill_type);
 +  const CFX_FillRenderOptions fill_options =

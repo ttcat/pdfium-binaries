@@ -381,5 +381,6 @@ into environment variables. **When none of them is set, behaviour is identical t
 | `PDFIUM_XFA_EXACT_WIDTH` | `1` | upstream layout (set for Adobe Acrobat-compatible XFA text layout: exact glyph advances instead of whole 1/1000 em, fractional field widths, glyphs at the top of each line box) |
 | `PDFIUM_XFA_PATH_ALIASED` | `1` | anti-aliased XFA lines, borders and fills |
 | `PDFIUM_XFA_STROKE_ADJUST` | `1` | no stroke adjustment for XFA lines |
+| `PDFIUM_XFA_PATH_NUDGE` | device px, e.g. `0.001` | `0` (shift XFA lines right/down so pixel-boundary ties resolve like Acrobat) |
 
 Build with the `xfaconvert macOS` workflow on branch `xfaconvert-7999` (PDFium chromium/7999).
