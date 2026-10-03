@@ -378,5 +378,6 @@ into environment variables. **When none of them is set, behaviour is identical t
 | `PDFIUM_XFA_SYNTHETIC_STYLE` | `0` | extra slant/emboldening on real italic/bold faces |
 | `PDFIUM_XFA_TEXT_DUMP` | file path | — (appends one line per XFA glyph: font, style, size, unicode, glyph id, device x/y) |
 | `PDFIUM_XFA_TEXT_SKIP` | `1` | — (record glyphs without drawing them) |
+| `PDFIUM_XFA_EXACT_WIDTH` | `1` | widths truncated to whole 1/1000 em (set to lay XFA text out with the fonts' exact advances, as Adobe Acrobat does) |
 
 Build with the `xfaconvert macOS` workflow on branch `xfaconvert-7999` (PDFium chromium/7999).

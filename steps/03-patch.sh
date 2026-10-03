@@ -30,6 +30,8 @@ apply_patch "$PATCHES/public_headers.patch"
 # xfaconvert（表格轉檔）：XFA 文字可切換成無反鋸齒＋黑白字形對齊，比照 Adobe Acrobat 的圖片匯出。
 # 預設行為不變；設定環境變數 PDFIUM_XFA_TEXT_ALIASED=1 才啟用。
 apply_patch "$PATCHES/xfaconvert/text.patch"
+# 版面用字型的精確字寬（PDFium 原本把字寬截成整數個千分之一 em）；PDFIUM_XFA_EXACT_WIDTH=1 才啟用。
+apply_patch "$PATCHES/xfaconvert/width.patch"
 apply_patch "$PATCHES/clang_rt.patch" build
 
 [ "$ENABLE_V8" == "true" ] && apply_patch "$PATCHES/v8/pdfium.patch"

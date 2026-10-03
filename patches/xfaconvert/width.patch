@@ -1,0 +1,240 @@
+diff --git a/core/fxge/cfx_face.cpp b/core/fxge/cfx_face.cpp
+index 3b51abe..bbcd377 100644
+--- a/core/fxge/cfx_face.cpp
++++ b/core/fxge/cfx_face.cpp
+@@ -1087,6 +1087,21 @@ int CFX_Face::GetGlyphWidth(uint32_t glyph_index,
+   return ft_result;
+ }
+ 
++float CFX_Face::GetGlyphWidthExact(uint32_t glyph_index) {
++  FT_FaceRec* rec = GetRec();
++  const uint16_t units_per_em = GetUnitsPerEm();
++  if (!rec || units_per_em == 0) {
++    return -1.0f;
++  }
++  int err = FT_Load_Glyph(
++      rec, glyph_index, FT_LOAD_NO_SCALE | FT_LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH);
++  if (err) {
++    return -1.0f;
++  }
++  return static_cast<float>(rec->glyph->metrics.horiAdvance) * 1000.0f /
++         units_per_em;
++}
++
+ ByteString CFX_Face::GetGlyphName(uint32_t glyph_index) {
+   char name[256] = {};
+   FT_Get_Glyph_Name(GetRec(), glyph_index, name, sizeof(name));
+diff --git a/core/fxge/cfx_face.h b/core/fxge/cfx_face.h
+index 6c225d0..bcacde3 100644
+--- a/core/fxge/cfx_face.h
++++ b/core/fxge/cfx_face.h
+@@ -116,6 +116,9 @@ class CFX_Face final : public Retainable, public Observable {
+                     int dest_width,
+                     int weight,
+                     const CFX_SubstFont* subst_font);
++  // xfaconvert: unrounded advance in 1/1000 em (GetGlyphWidth truncates it).
++  // Returns a negative value on failure.
++  float GetGlyphWidthExact(uint32_t glyph_index);
+   ByteString GetGlyphName(uint32_t glyph_index);
+ 
+   int GetCharIndex(uint32_t code);
+diff --git a/xfa/fgas/font/cfgas_gefont.cpp b/xfa/fgas/font/cfgas_gefont.cpp
+index b82b38b..40d544f 100644
+--- a/xfa/fgas/font/cfgas_gefont.cpp
++++ b/xfa/fgas/font/cfgas_gefont.cpp
+@@ -13,6 +13,7 @@
+ #include "core/fpdfapi/font/cpdf_font.h"
+ #include "core/fxcrt/check.h"
+ #include "core/fxge/cfx_charmap_resolver.h"
++#include "core/fxge/cfx_face.h"
+ #include "core/fxge/cfx_font.h"
+ #include "core/fxge/cfx_substfont.h"
+ #include "core/fxge/fx_font.h"
+@@ -189,6 +190,42 @@ std::optional<uint16_t> CFGAS_GEFont::GetCharWidth(wchar_t wUnicode) {
+   return width;
+ }
+ 
++std::optional<float> CFGAS_GEFont::GetCharWidthExact(wchar_t wUnicode) {
++  auto it = char_width_exact_map_.find(wUnicode);
++  if (it != char_width_exact_map_.end()) {
++    return it->second;
++  }
++
++  auto [glyph, pFont] = GetGlyphIndexAndFont(wUnicode, true);
++  if (!pFont || glyph == 0xffff) {
++    char_width_exact_map_[wUnicode] = std::nullopt;
++    return std::nullopt;
++  }
++  if (pFont != this) {
++    return pFont->GetCharWidthExact(wUnicode);
++  }
++
++  // Substituted generic fonts adjust widths to the requested font; keep the
++  // regular (rounded) path for those.
++  std::optional<float> width;
++  RetainPtr<CFX_Face> face = font_->GetFace();
++  const CFX_SubstFont* subst = font_->GetSubstFont();
++  if (face && !(subst && subst->IsBuiltInGenericFont())) {
++    float exact = face->GetGlyphWidthExact(glyph);
++    if (exact >= 0) {
++      width = exact;
++    }
++  }
++  if (!width.has_value()) {
++    std::optional<uint16_t> rounded = GetCharWidth(wUnicode);
++    if (rounded.has_value()) {
++      width = static_cast<float>(rounded.value());
++    }
++  }
++  char_width_exact_map_[wUnicode] = width;
++  return width;
++}
++
+ std::optional<FX_RECT> CFGAS_GEFont::GetCharBBox(wchar_t wUnicode) {
+   auto it = bbox_map_.find(wUnicode);
+   if (it != bbox_map_.end()) {
+diff --git a/xfa/fgas/font/cfgas_gefont.h b/xfa/fgas/font/cfgas_gefont.h
+index e625e4e..a0f42ee 100644
+--- a/xfa/fgas/font/cfgas_gefont.h
++++ b/xfa/fgas/font/cfgas_gefont.h
+@@ -41,6 +41,8 @@ class CFGAS_GEFont final : public Retainable {
+ 
+   uint32_t GetFontStyles() const;
+   std::optional<uint16_t> GetCharWidth(wchar_t wUnicode);
++  // xfaconvert: like GetCharWidth() but without truncating to whole 1/1000 em.
++  std::optional<float> GetCharWidthExact(wchar_t wUnicode);
+   int32_t GetGlyphIndex(wchar_t wUnicode);
+   int32_t GetAscent() const;
+   int32_t GetDescent() const;
+@@ -77,6 +79,7 @@ class CFGAS_GEFont final : public Retainable {
+   MaybeOwned<CFX_Font> font_;     // Must come before |charmap_resolver_|.
+   std::unique_ptr<CFX_CharmapResolver> charmap_resolver_;
+   std::map<wchar_t, std::optional<uint16_t>> char_width_map_;
++  std::map<wchar_t, std::optional<float>> char_width_exact_map_;
+   std::map<wchar_t, FX_RECT> bbox_map_;
+   std::vector<RetainPtr<CFGAS_GEFont>> subst_fonts_;
+   std::map<wchar_t, RetainPtr<CFGAS_GEFont>> font_mapper_;
+diff --git a/xfa/fgas/layout/cfgas_rtfbreak.cpp b/xfa/fgas/layout/cfgas_rtfbreak.cpp
+index 6053c43..ec2c2dd 100644
+--- a/xfa/fgas/layout/cfgas_rtfbreak.cpp
++++ b/xfa/fgas/layout/cfgas_rtfbreak.cpp
+@@ -23,6 +23,19 @@
+ #include "xfa/fgas/layout/cfgas_textuserdata.h"
+ #include "xfa/fgas/layout/fgas_arabic.h"
+ #include "xfa/fgas/layout/fgas_linebreak.h"
++#include <stdlib.h>
++
++namespace {
++
++// xfaconvert: PDFIUM_XFA_EXACT_WIDTH=1 lays text out with the fonts' exact
++// advance widths instead of widths truncated to whole 1/1000 em, matching
++// Adobe Acrobat's glyph placement.
++bool UseExactWidths() {
++  const char* value = getenv("PDFIUM_XFA_EXACT_WIDTH");
++  return value && value[0] && value[0] != '0';
++}
++
++}  // namespace
+ 
+ CFGAS_RTFBreak::CFGAS_RTFBreak(Mask<LayoutStyle> dwLayoutStyles)
+     : CFGAS_Break(dwLayoutStyles) {
+@@ -279,12 +292,18 @@ CFGAS_Char::BreakType CFGAS_RTFBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
+   CharType char_type = pCurChar->GetCharType();
+   wchar_t wForm = pCurChar->char_code();
+   FX_SAFE_INT32 iCharWidth = 0;
+-  if (font_) {
+-    iCharWidth = font_->GetCharWidth(wForm).value_or(0);
++  if (font_ && UseExactWidths()) {
++    iCharWidth = static_cast<int32_t>(
++        FXSYS_roundf(font_->GetCharWidthExact(wForm).value_or(0.0f) *
++                     font_size_ * horizontal_scale_ / 100.0f));
++  } else {
++    if (font_) {
++      iCharWidth = font_->GetCharWidth(wForm).value_or(0);
++    }
++    iCharWidth *= font_size_;
++    iCharWidth *= horizontal_scale_;
++    iCharWidth /= 100;
+   }
+-  iCharWidth *= font_size_;
+-  iCharWidth *= horizontal_scale_;
+-  iCharWidth /= 100;
+   iCharWidth += char_space_;
+ 
+   int iValidCharWidth = iCharWidth.ValueOrDefault(0);
+@@ -790,6 +809,7 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+       ++szCount;
+     }
+ 
++    const int iRawCharWidth = iCharWidth;
+     iCharWidth /= iFontSize;
+     wchar_t wForm = wch;
+     if (dwCharType >= CharType::kArabicAlef) {
+@@ -817,7 +837,11 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+       current_char_pos.font_char_width_ = iCharWidth;
+     }
+ 
+-    float fCharWidth = fFontSize * iCharWidth / 1000.0f;
++    float fCharWidth =
++        UseExactWidths()
++            ? fFontSize * iRawCharWidth / static_cast<float>(iFontSize) /
++                  1000.0f
++            : fFontSize * iCharWidth / 1000.0f;
+     if (bRTLPiece && dwCharType != CharType::kCombination) {
+       fX -= fCharWidth;
+     }
+diff --git a/xfa/fgas/layout/cfgas_txtbreak.cpp b/xfa/fgas/layout/cfgas_txtbreak.cpp
+index 61bbbc1..887eff1 100644
+--- a/xfa/fgas/layout/cfgas_txtbreak.cpp
++++ b/xfa/fgas/layout/cfgas_txtbreak.cpp
+@@ -23,6 +23,19 @@
+ #include "xfa/fgas/layout/cfgas_char.h"
+ #include "xfa/fgas/layout/fgas_arabic.h"
+ #include "xfa/fgas/layout/fgas_linebreak.h"
++#include <stdlib.h>
++
++namespace {
++
++// xfaconvert: PDFIUM_XFA_EXACT_WIDTH=1 lays text out with the fonts' exact
++// advance widths instead of widths truncated to whole 1/1000 em, matching
++// Adobe Acrobat's glyph placement.
++bool UseExactWidths() {
++  const char* value = getenv("PDFIUM_XFA_EXACT_WIDTH");
++  return value && value[0] && value[0] != '0';
++}
++
++}  // namespace
+ 
+ namespace {
+ 
+@@ -199,6 +212,10 @@ CFGAS_Char::BreakType CFGAS_TxtBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
+   FX_SAFE_INT32 iCharWidth = 0;
+   if (comb_text_) {
+     iCharWidth = comb_width_;
++  } else if (font_ && UseExactWidths()) {
++    iCharWidth = static_cast<int32_t>(
++        FXSYS_roundf(font_->GetCharWidthExact(wForm).value_or(0.0f) *
++                     font_size_ * horizontal_scale_ / 100.0f));
+   } else if (font_) {
+     iCharWidth = font_->GetCharWidth(wForm).value_or(0);
+     iCharWidth *= font_size_;
+@@ -825,6 +842,8 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
+       iCharWidth = -iCharWidth;
+     }
+ 
++    const float fExactFirstWidth =
++        fFontSize * iCharWidth / static_cast<float>(iFontSize) / 1000.0f;
+     iCharWidth /= iFontSize;
+     std::array<FX_FORMCHAR, 3> form_chars;
+     form_chars[0].wch = wch;
+@@ -856,7 +875,9 @@ size_t CFGAS_TxtBreak::GetDisplayPos(const Run& run,
+         front_ref.font_char_width_ = iCharWidth;
+       }
+ 
+-      const float fCharWidth = fFontSize * iCharWidth / 1000.0f;
++      const float fCharWidth = (j == 0 && UseExactWidths())
++                                   ? fExactFirstWidth
++                                   : fFontSize * iCharWidth / 1000.0f;
+       if (bRTLPiece && chartype != CharType::kCombination) {
+         fX -= fCharWidth;
+       }
