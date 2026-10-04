@@ -172,14 +172,16 @@ index e625e4e..a0f42ee 100644
    std::vector<RetainPtr<CFGAS_GEFont>> subst_fonts_;
    std::map<wchar_t, RetainPtr<CFGAS_GEFont>> font_mapper_;
 diff --git a/xfa/fgas/layout/cfgas_rtfbreak.cpp b/xfa/fgas/layout/cfgas_rtfbreak.cpp
-index 6053c43..832ebb6 100644
+index 6053c43..700ad17 100644
 --- a/xfa/fgas/layout/cfgas_rtfbreak.cpp
 +++ b/xfa/fgas/layout/cfgas_rtfbreak.cpp
-@@ -23,6 +23,19 @@
+@@ -23,6 +23,21 @@
  #include "xfa/fgas/layout/cfgas_textuserdata.h"
  #include "xfa/fgas/layout/fgas_arabic.h"
  #include "xfa/fgas/layout/fgas_linebreak.h"
 +#include <stdlib.h>
++#include <set>
++#include <vector>
 +
 +namespace {
 +
@@ -195,7 +197,7 @@ index 6053c43..832ebb6 100644
  
  CFGAS_RTFBreak::CFGAS_RTFBreak(Mask<LayoutStyle> dwLayoutStyles)
      : CFGAS_Break(dwLayoutStyles) {
-@@ -279,12 +292,18 @@ CFGAS_Char::BreakType CFGAS_RTFBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
+@@ -279,12 +294,18 @@ CFGAS_Char::BreakType CFGAS_RTFBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
    CharType char_type = pCurChar->GetCharType();
    wchar_t wForm = pCurChar->char_code();
    FX_SAFE_INT32 iCharWidth = 0;
@@ -219,7 +221,7 @@ index 6053c43..832ebb6 100644
    iCharWidth += char_space_;
  
    int iValidCharWidth = iCharWidth.ValueOrDefault(0);
-@@ -508,6 +527,31 @@ std::deque<CFGAS_Break::TPO> CFGAS_RTFBreak::EndBreakBidiLine(
+@@ -508,12 +529,43 @@ std::deque<CFGAS_Break::TPO> CFGAS_RTFBreak::EndBreakBidiLine(
    return tpos;
  }
  
@@ -234,16 +236,20 @@ index 6053c43..832ebb6 100644
 +  return !UseExactWidths() || tc->GetCharType() == CharType::kSpace;
 +}
 +
-+// A run of spaces counts as one gap (only its last space stretches).
-+bool IsJustifyGapAt(const CFGAS_BreakPiece& piece, int32_t j) {
-+  const CFGAS_Char* tc = piece.GetChar(j);
-+  if (!IsJustifyGap(tc)) {
-+    return false;
++// A run of spaces counts as one gap (only its last space stretches), even
++// when the run spans pieces (Designer writes "x <span xfa-spacerun> </span>").
++std::set<const CFGAS_Char*> SpacesInsideRuns(const std::vector<CFGAS_Char>& chars) {
++  std::set<const CFGAS_Char*> inside;
++  if (!UseExactWidths()) {
++    return inside;
 +  }
-+  if (!UseExactWidths() || j + 1 >= piece.GetCharCount()) {
-+    return true;
++  for (size_t i = 0; i + 1 < chars.size(); ++i) {
++    if (chars[i].GetCharType() == CharType::kSpace &&
++        chars[i + 1].GetCharType() == CharType::kSpace) {
++      inside.insert(&chars[i]);
++    }
 +  }
-+  return piece.GetChar(j + 1)->GetCharType() != CharType::kSpace;
++  return inside;
 +}
 +
 +}  // namespace
@@ -251,26 +257,34 @@ index 6053c43..832ebb6 100644
  void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
                                         bool bAllChars,
                                         CFGAS_Char::BreakType dwStatus) {
-@@ -524,7 +568,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
+   int32_t iNetWidth = cur_line_->width_;
+   int32_t iGapChars = 0;
+   bool bFind = false;
++  const std::set<const CFGAS_Char*> inside_runs =
++      SpacesInsideRuns(cur_line_->line_chars_);
+   for (const TPO& pos : pdfium::Reversed(tpos)) {
+     const CFGAS_BreakPiece& ttp = cur_line_->line_pieces_[pos.index];
+     if (!bFind) {
+@@ -524,7 +576,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
      int32_t j = bArabic ? 0 : ttp.GetCharCount() - 1;
      while (j > -1 && j < ttp.GetCharCount()) {
        const CFGAS_Char* tc = ttp.GetChar(j);
 -      if (tc->line_break_type_ == pdfium::LineBreakType::kDirectBreak) {
-+      if (IsJustifyGapAt(ttp, j)) {
++      if (IsJustifyGap(tc) && !inside_runs.count(tc)) {
          ++iGapChars;
        }
  
-@@ -567,8 +611,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
+@@ -567,8 +619,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
  
        for (int32_t j = 0; j < ttp.GetCharCount(); ++j) {
          CFGAS_Char* tc = ttp.GetChar(j);
 -        if (tc->line_break_type_ != pdfium::LineBreakType::kDirectBreak ||
 -            tc->char_width_ < 0) {
-+        if (!IsJustifyGapAt(ttp, j) || tc->char_width_ < 0) {
++        if (!IsJustifyGap(tc) || inside_runs.count(tc) || tc->char_width_ < 0) {
            continue;
          }
          int32_t k = iOffset / iGapChars;
-@@ -790,6 +833,7 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+@@ -790,6 +841,7 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
        ++szCount;
      }
  
@@ -278,7 +292,7 @@ index 6053c43..832ebb6 100644
      iCharWidth /= iFontSize;
      wchar_t wForm = wch;
      if (dwCharType >= CharType::kArabicAlef) {
-@@ -817,7 +861,11 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+@@ -817,7 +869,11 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
        current_char_pos.font_char_width_ = iCharWidth;
      }
  
