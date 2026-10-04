@@ -172,16 +172,14 @@ index e625e4e..a0f42ee 100644
    std::vector<RetainPtr<CFGAS_GEFont>> subst_fonts_;
    std::map<wchar_t, RetainPtr<CFGAS_GEFont>> font_mapper_;
 diff --git a/xfa/fgas/layout/cfgas_rtfbreak.cpp b/xfa/fgas/layout/cfgas_rtfbreak.cpp
-index 6053c43..d0f5319 100644
+index 6053c43..b4aee43 100644
 --- a/xfa/fgas/layout/cfgas_rtfbreak.cpp
 +++ b/xfa/fgas/layout/cfgas_rtfbreak.cpp
-@@ -23,6 +23,21 @@
+@@ -23,6 +23,19 @@
  #include "xfa/fgas/layout/cfgas_textuserdata.h"
  #include "xfa/fgas/layout/fgas_arabic.h"
  #include "xfa/fgas/layout/fgas_linebreak.h"
 +#include <stdlib.h>
-+#include <set>
-+#include <vector>
 +
 +namespace {
 +
@@ -197,7 +195,7 @@ index 6053c43..d0f5319 100644
  
  CFGAS_RTFBreak::CFGAS_RTFBreak(Mask<LayoutStyle> dwLayoutStyles)
      : CFGAS_Break(dwLayoutStyles) {
-@@ -279,12 +294,18 @@ CFGAS_Char::BreakType CFGAS_RTFBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
+@@ -279,12 +292,18 @@ CFGAS_Char::BreakType CFGAS_RTFBreak::AppendChar_Others(CFGAS_Char* pCurChar) {
    CharType char_type = pCurChar->GetCharType();
    wchar_t wForm = pCurChar->char_code();
    FX_SAFE_INT32 iCharWidth = 0;
@@ -221,7 +219,7 @@ index 6053c43..d0f5319 100644
    iCharWidth += char_space_;
  
    int iValidCharWidth = iCharWidth.ValueOrDefault(0);
-@@ -508,12 +529,45 @@ std::deque<CFGAS_Break::TPO> CFGAS_RTFBreak::EndBreakBidiLine(
+@@ -508,6 +527,22 @@ std::deque<CFGAS_Break::TPO> CFGAS_RTFBreak::EndBreakBidiLine(
    return tpos;
  }
  
@@ -229,29 +227,14 @@ index 6053c43..d0f5319 100644
 +
 +// xfaconvert: Adobe Acrobat stretches only spaces when justifying; PDFium
 +// stretched every break opportunity (after "/", "-", zero-width spaces...).
++// Measured against Acrobat's PostScript: every space gets the same extra width,
++// including spaces that are not break opportunities (the second space of a
++// Designer double space, written as "x <span xfa-spacerun> </span>").
 +bool IsJustifyGap(const CFGAS_Char* tc) {
-+  if (tc->line_break_type_ != pdfium::LineBreakType::kDirectBreak) {
-+    return false;
++  if (UseExactWidths()) {
++    return tc->GetCharType() == CharType::kSpace;
 +  }
-+  return !UseExactWidths() || tc->GetCharType() == CharType::kSpace;
-+}
-+
-+// Spaces in a run of two or more (Designer writes "x <span xfa-spacerun>
-+// </span>") are not stretched at all when justifying, as in Adobe Acrobat;
-+// the run can span rich-text pieces, so look at the whole line.
-+std::set<const CFGAS_Char*> SpacesInsideRuns(const std::vector<CFGAS_Char>& chars) {
-+  std::set<const CFGAS_Char*> inside;
-+  if (!UseExactWidths()) {
-+    return inside;
-+  }
-+  for (size_t i = 0; i + 1 < chars.size(); ++i) {
-+    if (chars[i].GetCharType() == CharType::kSpace &&
-+        chars[i + 1].GetCharType() == CharType::kSpace) {
-+      inside.insert(&chars[i]);
-+      inside.insert(&chars[i + 1]);
-+    }
-+  }
-+  return inside;
++  return tc->line_break_type_ == pdfium::LineBreakType::kDirectBreak;
 +}
 +
 +}  // namespace
@@ -259,34 +242,26 @@ index 6053c43..d0f5319 100644
  void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
                                         bool bAllChars,
                                         CFGAS_Char::BreakType dwStatus) {
-   int32_t iNetWidth = cur_line_->width_;
-   int32_t iGapChars = 0;
-   bool bFind = false;
-+  const std::set<const CFGAS_Char*> inside_runs =
-+      SpacesInsideRuns(cur_line_->line_chars_);
-   for (const TPO& pos : pdfium::Reversed(tpos)) {
-     const CFGAS_BreakPiece& ttp = cur_line_->line_pieces_[pos.index];
-     if (!bFind) {
-@@ -524,7 +578,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
+@@ -524,7 +559,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
      int32_t j = bArabic ? 0 : ttp.GetCharCount() - 1;
      while (j > -1 && j < ttp.GetCharCount()) {
        const CFGAS_Char* tc = ttp.GetChar(j);
 -      if (tc->line_break_type_ == pdfium::LineBreakType::kDirectBreak) {
-+      if (IsJustifyGap(tc) && !inside_runs.count(tc)) {
++      if (IsJustifyGap(tc)) {
          ++iGapChars;
        }
  
-@@ -567,8 +621,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
+@@ -567,8 +602,7 @@ void CFGAS_RTFBreak::EndBreakAlignment(const std::deque<TPO>& tpos,
  
        for (int32_t j = 0; j < ttp.GetCharCount(); ++j) {
          CFGAS_Char* tc = ttp.GetChar(j);
 -        if (tc->line_break_type_ != pdfium::LineBreakType::kDirectBreak ||
 -            tc->char_width_ < 0) {
-+        if (!IsJustifyGap(tc) || inside_runs.count(tc) || tc->char_width_ < 0) {
++        if (!IsJustifyGap(tc) || tc->char_width_ < 0) {
            continue;
          }
          int32_t k = iOffset / iGapChars;
-@@ -790,6 +843,7 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+@@ -790,6 +824,7 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
        ++szCount;
      }
  
@@ -294,7 +269,7 @@ index 6053c43..d0f5319 100644
      iCharWidth /= iFontSize;
      wchar_t wForm = wch;
      if (dwCharType >= CharType::kArabicAlef) {
-@@ -817,7 +871,11 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
+@@ -817,7 +852,11 @@ size_t CFGAS_RTFBreak::GetDisplayPos(const CFGAS_TextPiece* pPiece,
        current_char_pos.font_char_width_ = iCharWidth;
      }
  
